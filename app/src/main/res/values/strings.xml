@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">ESC/POS Thermal Print Studio</string>
+    <string name="tab_receipt">POS Receipt</string>
+    <string name="tab_editor">ESC/POS Tags</string>
+    <string name="tab_barcode">Barcodes &amp; QR</string>
+    <string name="tab_image">Image / Logo</string>
+    <string name="tab_settings">Connection &amp; Tests</string>
+    
+    <!-- Connection strings -->
+    <string name="conn_bluetooth">Bluetooth</string>
+    <string name="conn_tcp">TCP / Wi-Fi</string>
+    <string name="conn_usb">USB OTG</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_printing">Printing…</string>
+</resources>
