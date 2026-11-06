@@ -5,15 +5,44 @@ import com.dantsu.thermalprinter.model.Receipt;
 import com.dantsu.thermalprinter.model.ReceiptItem;
 
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 public class ReceiptFormatter {
 
+    // OPT-04: Pre-compiled static regex patterns — avoids Pattern.compile() on every preview update
+    public static final Pattern PAT_ALIGN      = Pattern.compile("\\[[LCR]]");
+    public static final Pattern PAT_BOLD_OPEN  = Pattern.compile("<b>");
+    public static final Pattern PAT_BOLD_CLOSE = Pattern.compile("</b>");
+    public static final Pattern PAT_ITALIC     = Pattern.compile("</?i>");
+    public static final Pattern PAT_FONT_OPEN  = Pattern.compile("<font[^>]*>");
+    public static final Pattern PAT_FONT_CLOSE = Pattern.compile("</font>");
+    public static final Pattern PAT_UNDERLINE  = Pattern.compile("<u[^>]*>|</u>");
+    public static final Pattern PAT_BARCODE    = Pattern.compile("<barcode[^>]*>.*?</barcode>", Pattern.DOTALL);
+    public static final Pattern PAT_QRCODE     = Pattern.compile("<qrcode[^>]*>.*?</qrcode>", Pattern.DOTALL);
+    public static final Pattern PAT_IMG        = Pattern.compile("<img>.*?</img>", Pattern.DOTALL);
+
+    /** Strips ESC/POS tags from formatted text for on-screen monospace preview. */
+    public static String stripTagsForPreview(String formatted) {
+        String s = PAT_ALIGN.matcher(formatted).replaceAll("");
+        s = PAT_BOLD_OPEN.matcher(s).replaceAll("");
+        s = PAT_BOLD_CLOSE.matcher(s).replaceAll("");
+        s = PAT_ITALIC.matcher(s).replaceAll("");
+        s = PAT_FONT_OPEN.matcher(s).replaceAll("");
+        s = PAT_FONT_CLOSE.matcher(s).replaceAll("");
+        s = PAT_UNDERLINE.matcher(s).replaceAll("");
+        s = PAT_BARCODE.matcher(s).replaceAll("[BARCODE GENERATED BELOW]");
+        s = PAT_QRCODE.matcher(s).replaceAll("[QR CODE GENERATED BELOW]");
+        s = PAT_IMG.matcher(s).replaceAll("[STORE LOGO BITMAP]");
+        return s.trim();
+    }
+
     /**
-     * Formats a complete POS receipt into DantSu ESC/POS formatted text syntax
+     * Formats a complete POS receipt into DantSu ESC/POS formatted text syntax.
      */
     public static String formatReceipt(Receipt receipt, PrinterConfig config) {
-        StringBuilder sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder(512);
         int charsPerLine = config.getCharsPerLine();
         String currency = receipt.getCurrencySymbol();
 
@@ -42,7 +71,7 @@ public class ReceiptFormatter {
             sb.append("[L]Customer: ").append(receipt.getCustomerName()).append("\n");
         }
 
-        // 4. Items table divider & header
+        // 4. Items table
         sb.append("[C]").append(getDivider("-", charsPerLine)).append("\n");
         sb.append("[L]<b>ITEM</b>[R]<b>TOTAL</b>\n");
         sb.append("[C]").append(getDivider("-", charsPerLine)).append("\n");
@@ -54,19 +83,16 @@ public class ReceiptFormatter {
             sb.append("[L]  ").append(item.getQuantity()).append(" x ").append(item.getFormattedPrice(currency)).append("\n");
         }
 
-        // 6. Totals section
+        // 6. Totals
         sb.append("[C]").append(getDivider("-", charsPerLine)).append("\n");
         sb.append("[L]SUBTOTAL:[R]").append(String.format(Locale.US, "%s%.2f", currency, receipt.getSubtotal())).append("\n");
-
         if (receipt.getDiscountAmount() > 0) {
             sb.append("[L]DISCOUNT:[R]-").append(String.format(Locale.US, "%s%.2f", currency, receipt.getDiscountAmount())).append("\n");
         }
-
         if (receipt.getTaxRatePercent() > 0) {
-            sb.append("[L]TAX (").append(String.format(Locale.US, "%.1f", receipt.getTaxRatePercent())).append("%):")
-              .append("[R]").append(String.format(Locale.US, "%s%.2f", currency, receipt.getTaxAmount())).append("\n");
+            sb.append("[L]TAX (").append(String.format(Locale.US, "%.1f", receipt.getTaxRatePercent())).append("%):").append("[R]")
+              .append(String.format(Locale.US, "%s%.2f", currency, receipt.getTaxAmount())).append("\n");
         }
-
         sb.append("[C]").append(getDivider("=", charsPerLine)).append("\n");
         sb.append("[L]<b><font size='tall'>TOTAL DUE:</font></b>")
           .append("[R]<b><font size='tall'>").append(String.format(Locale.US, "%s%.2f", currency, receipt.getGrandTotal()))
@@ -74,16 +100,15 @@ public class ReceiptFormatter {
         sb.append("[C]").append(getDivider("=", charsPerLine)).append("\n");
         sb.append("[L]\n");
 
-        // 7. Footer note
+        // 7. Footer
         if (receipt.getFooterMessage() != null && !receipt.getFooterMessage().trim().isEmpty()) {
-            String[] lines = receipt.getFooterMessage().split("\n");
-            for (String line : lines) {
+            for (String line : receipt.getFooterMessage().split("\n")) {
                 sb.append("[C]").append(line.trim()).append("\n");
             }
             sb.append("[L]\n");
         }
 
-        // 8. Barcode (e.g. 12 digits EAN13 or Code 128)
+        // 8. Barcode
         if (receipt.isIncludeBarcode() && receipt.getBarcodeValue() != null && !receipt.getBarcodeValue().trim().isEmpty()) {
             String barcode = receipt.getBarcodeValue().trim();
             if (barcode.matches("\\d{12}")) {
@@ -102,11 +127,9 @@ public class ReceiptFormatter {
         return sb.toString();
     }
 
-    private static String getDivider(String charPattern, int count) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < count; i++) {
-            sb.append(charPattern);
-        }
-        return sb.toString();
+    private static String getDivider(String ch, int count) {
+        char[] chars = new char[count];
+        Arrays.fill(chars, ch.charAt(0));
+        return new String(chars);
     }
 }

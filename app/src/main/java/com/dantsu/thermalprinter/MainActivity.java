@@ -113,6 +113,7 @@ public class MainActivity extends AppCompatActivity {
         try {
             unregisterReceiver(usbReceiver);
         } catch (Exception ignored) {}
+        binding = null; // BUG-10 FIX: prevent stale binding references
     }
 
     private void setupToolbar() {
@@ -165,6 +166,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public void updateStatusDisplay() {
+        // BUG-10 FIX: Guard against null binding (called after onDestroy in some lifecycle paths)
+        if (binding == null) return;
         config = PrinterConfig.load(this);
         String connType = config.getConnectionType();
         binding.textConnectionMode.setText(connType);

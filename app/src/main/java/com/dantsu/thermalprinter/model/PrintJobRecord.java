@@ -26,6 +26,14 @@ public class PrintJobRecord implements Serializable {
         this.rawText = rawText;
     }
 
+    /**
+     * BUG-08 FIX: Restore id and timestamp from persisted storage so history shows correct dates.
+     */
+    public void restoreIdAndTimestamp(String persistedId, long persistedTimestamp) {
+        if (persistedId != null && !persistedId.isEmpty()) this.id = persistedId;
+        if (persistedTimestamp > 0) this.timestamp = persistedTimestamp;
+    }
+
     public String getId() { return id; }
     public long getTimestamp() { return timestamp; }
     public String getFormattedDate() {

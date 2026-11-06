@@ -15,6 +15,8 @@ public class PrintHistoryStore {
     private static final String PREF_NAME = "print_history_prefs";
     private static final String KEY_JOBS = "jobs_list";
     private static final int MAX_JOBS = 30;
+    /** Max raw ESC/POS text bytes stored per job. Prevents SharedPrefs bloat from image hex strings. */
+    private static final int MAX_RAW_TEXT_BYTES = 2048;
 
     public static synchronized void addJob(Context context, PrintJobRecord job) {
         List<PrintJobRecord> list = getJobs(context);
@@ -35,25 +37,33 @@ public class PrintHistoryStore {
             JSONArray arr = new JSONArray(json);
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject obj = arr.getJSONObject(i);
-                list.add(new PrintJobRecord(
+                PrintJobRecord record = new PrintJobRecord(
                         obj.optString("title"),
                         obj.optString("details"),
                         obj.optString("connectionType"),
                         obj.optString("targetDevice"),
                         obj.optBoolean("success"),
                         obj.optString("rawText")
-                ));
+                );
+                // BUG-08 FIX: Restore persisted id and timestamp
+                record.restoreIdAndTimestamp(
+                        obj.optString("id", record.getId()),
+                        obj.optLong("timestamp", record.getTimestamp())
+                );
+                list.add(record);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            // Corrupt data — reset history gracefully
+            clearHistory(context);
         }
         return list;
     }
 
     public static synchronized void clearHistory(Context context) {
-        SharedPreferences.Editor editor = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).edit();
-        editor.remove(KEY_JOBS);
-        editor.apply();
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .remove(KEY_JOBS)
+                .apply();
     }
 
     private static void saveJobs(Context context, List<PrintJobRecord> list) {
@@ -61,17 +71,25 @@ public class PrintHistoryStore {
             JSONArray arr = new JSONArray();
             for (PrintJobRecord j : list) {
                 JSONObject obj = new JSONObject();
+                obj.put("id", j.getId());
+                obj.put("timestamp", j.getTimestamp()); // BUG-08 FIX
                 obj.put("title", j.getTitle());
                 obj.put("details", j.getDetails());
                 obj.put("connectionType", j.getConnectionType());
                 obj.put("targetDevice", j.getTargetDevice());
                 obj.put("success", j.isSuccess());
-                obj.put("rawText", j.getRawText());
+                // OPT-07: Truncate oversized rawText (image hex strings) to prevent SharedPrefs bloat
+                String raw = j.getRawText();
+                if (raw != null && raw.length() > MAX_RAW_TEXT_BYTES) {
+                    raw = raw.substring(0, MAX_RAW_TEXT_BYTES) + "...[truncated]";
+                }
+                obj.put("rawText", raw);
                 arr.put(obj);
             }
-            SharedPreferences.Editor editor = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).edit();
-            editor.putString(KEY_JOBS, arr.toString());
-            editor.apply();
+            context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putString(KEY_JOBS, arr.toString())
+                    .apply();
         } catch (Exception e) {
             e.printStackTrace();
         }

@@ -1,7 +1,6 @@
 package com.dantsu.thermalprinter.ui;
 
 import android.content.Context;
-import android.graphics.Bitmap;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -25,7 +24,6 @@ import com.dantsu.thermalprinter.model.PrinterConfig;
 import com.dantsu.thermalprinter.model.Receipt;
 import com.dantsu.thermalprinter.model.ReceiptItem;
 import com.google.android.material.chip.Chip;
-import com.google.android.material.chip.ChipGroup;
 import com.google.zxing.BarcodeFormat;
 
 import java.util.Locale;
@@ -49,7 +47,7 @@ public class ReceiptFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
         Context context = requireContext();
-        config = PrinterConfig.load(context);
+        config = PrinterConfig.load(context); // Load config once at creation
         progressDialog = new PrintProgressDialog(context);
 
         setupRecyclerView();
@@ -61,6 +59,7 @@ public class ReceiptFragment extends Fragment {
     @Override
     public void onResume() {
         super.onResume();
+        // BUG-05 FIX: Reload config only on resume (tab switch), not on every keystroke
         config = PrinterConfig.load(requireContext());
         binding.textPreviewPaperWidth.setText(config.getPaperWidthMM() + "mm Paper (" + config.getCharsPerLine() + " Chars)");
         updateThermalPreview();
@@ -93,9 +92,7 @@ public class ReceiptFragment extends Fragment {
         EditText editName = dialogView.findViewById(R.id.editDialogItemName);
         EditText editQty = dialogView.findViewById(R.id.editDialogItemQty);
         EditText editPrice = dialogView.findViewById(R.id.editDialogItemPrice);
-        ChipGroup chipGroup = dialogView.findViewById(R.id.chipGroupItemPresets);
 
-        // Preset chip listeners
         setupPresetChip(dialogView, R.id.chipPresetEspresso, "Espresso", 3.50, editName, editPrice);
         setupPresetChip(dialogView, R.id.chipPresetCappuccino, "Cappuccino", 4.75, editName, editPrice);
         setupPresetChip(dialogView, R.id.chipPresetCroissant, "Butter Croissant", 3.25, editName, editPrice);
@@ -112,7 +109,6 @@ public class ReceiptFragment extends Fragment {
                     try { qty = Integer.parseInt(editQty.getText().toString().trim()); } catch (Exception ignored) {}
                     double price = 0.0;
                     try { price = Double.parseDouble(editPrice.getText().toString().trim()); } catch (Exception ignored) {}
-
                     receipt.getItems().add(new ReceiptItem(name, Math.max(1, qty), price));
                     itemAdapter.notifyItemInserted(receipt.getItems().size() - 1);
                     updateThermalPreview();
@@ -137,7 +133,7 @@ public class ReceiptFragment extends Fragment {
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override public void afterTextChanged(Editable s) {
                 syncModelFromUi();
-                updateThermalPreview();
+                updateThermalPreview(); // config is NOT reloaded here (BUG-05 FIX)
             }
         };
 
@@ -182,15 +178,10 @@ public class ReceiptFragment extends Fragment {
         receipt.setCustomerName(binding.editCustomerName.getText().toString());
         receipt.setPaymentMethod(binding.editPaymentMethod.getText().toString());
         receipt.setFooterMessage(binding.editFooterMessage.getText().toString());
-
-        try {
-            receipt.setTaxRatePercent(Double.parseDouble(binding.editTaxRate.getText().toString()));
-        } catch (Exception e) { receipt.setTaxRatePercent(0.0); }
-
-        try {
-            receipt.setDiscountAmount(Double.parseDouble(binding.editDiscount.getText().toString()));
-        } catch (Exception e) { receipt.setDiscountAmount(0.0); }
-
+        try { receipt.setTaxRatePercent(Double.parseDouble(binding.editTaxRate.getText().toString())); }
+        catch (Exception e) { receipt.setTaxRatePercent(0.0); }
+        try { receipt.setDiscountAmount(Double.parseDouble(binding.editDiscount.getText().toString())); }
+        catch (Exception e) { receipt.setDiscountAmount(0.0); }
         receipt.setBarcodeValue(binding.editBarcodeValue.getText().toString());
         receipt.setQrCodeValue(binding.editQrValue.getText().toString());
     }
@@ -211,69 +202,54 @@ public class ReceiptFragment extends Fragment {
         binding.editFooterMessage.setText(receipt.getFooterMessage());
         binding.editBarcodeValue.setText(receipt.getBarcodeValue());
         binding.editQrValue.setText(receipt.getQrCodeValue());
-
         binding.switchBarcode.setChecked(receipt.isIncludeBarcode());
         binding.switchQrCode.setChecked(receipt.isIncludeQrCode());
-
         updateThermalPreview();
     }
 
     private void updateThermalPreview() {
-        if (binding == null) return;
-        config = PrinterConfig.load(requireContext());
+        if (binding == null || !isAdded()) return; // BUG-02 FIX: guard against detached state
 
         String totalBadge = String.format(Locale.US, "Total Due: %s%.2f", receipt.getCurrencySymbol(), receipt.getGrandTotal());
         binding.textGrandTotalBadge.setText(totalBadge);
 
         String formattedText = ReceiptFormatter.formatReceipt(receipt, config);
 
-        // Strip raw DantSu tags for clean on-screen monospace simulation
-        String cleanPreview = formattedText
-                .replaceAll("\\[[LCR]\\]", "")
-                .replaceAll("</?[bui]>", "")
-                .replaceAll("<font[^>]*>", "")
-                .replaceAll("</font>", "")
-                .replaceAll("<u[^>]*>", "")
-                .replaceAll("</u>", "")
-                .replaceAll("<barcode[^>]*>.*?</barcode>", "[BARCODE GENERATED BELOW]")
-                .replaceAll("<qrcode[^>]*>.*?</qrcode>", "[QR CODE GENERATED BELOW]")
-                .replaceAll("<img>.*?</img>", "[STORE LOGO BITMAP]");
+        // OPT-04 FIX: Use pre-compiled static regex patterns from ReceiptFormatter
+        String cleanPreview = ReceiptFormatter.stripTagsForPreview(formattedText);
+        binding.textLiveThermalPreview.setText(cleanPreview);
 
-        binding.textLiveThermalPreview.setText(cleanPreview.trim());
-
-        // Update live Barcode preview bitmap
+        // BUG-06 FIX: Async barcode generation (non-blocking main thread)
         if (receipt.isIncludeBarcode() && receipt.getBarcodeValue() != null && !receipt.getBarcodeValue().trim().isEmpty()) {
             binding.imgPreviewBarcode.setVisibility(View.VISIBLE);
             String barcode = receipt.getBarcodeValue().trim();
-            Bitmap bmap = null;
-            if (barcode.matches("\\d{12}")) {
-                bmap = BarcodePreviewHelper.generateBarcode(barcode, BarcodeFormat.EAN_13, 400, 100);
-            } else if (barcode.matches("\\d{11}")) {
-                bmap = BarcodePreviewHelper.generateBarcode(barcode, BarcodeFormat.UPC_A, 400, 100);
-            } else {
-                bmap = BarcodePreviewHelper.generateBarcode(barcode, BarcodeFormat.CODE_128, 400, 100);
-            }
-            if (bmap != null) binding.imgPreviewBarcode.setImageBitmap(bmap);
+            BarcodeFormat fmt = barcode.matches("\\d{12}") ? BarcodeFormat.EAN_13
+                    : barcode.matches("\\d{11}") ? BarcodeFormat.UPC_A
+                    : BarcodeFormat.CODE_128;
+            BarcodePreviewHelper.generateBarcodeAsync(barcode, fmt, 400, 100, bitmap -> {
+                if (binding != null && isAdded()) binding.imgPreviewBarcode.setImageBitmap(bitmap);
+            });
         } else {
             binding.imgPreviewBarcode.setVisibility(View.GONE);
         }
 
-        // Update live QR Code preview bitmap
         if (receipt.isIncludeQrCode() && receipt.getQrCodeValue() != null && !receipt.getQrCodeValue().trim().isEmpty()) {
             binding.imgPreviewQr.setVisibility(View.VISIBLE);
-            Bitmap qrBitmap = BarcodePreviewHelper.generateQrCode(receipt.getQrCodeValue().trim(), 200, 200);
-            if (qrBitmap != null) binding.imgPreviewQr.setImageBitmap(qrBitmap);
+            BarcodePreviewHelper.generateQrCodeAsync(receipt.getQrCodeValue().trim(), 200, 200, bitmap -> {
+                if (binding != null && isAdded()) binding.imgPreviewQr.setImageBitmap(bitmap);
+            });
         } else {
             binding.imgPreviewQr.setVisibility(View.GONE);
         }
     }
 
     private void printReceiptNow() {
+        if (!isAdded()) return;
         syncModelFromUi();
         config = PrinterConfig.load(requireContext());
         String textToPrint = ReceiptFormatter.formatReceipt(receipt, config);
 
-        progressDialog.show("Printing Receipt", "Connecting to " + config.getConnectionType() + "…");
+        progressDialog.show("Printing Receipt", "Connecting to " + config.getConnectionType() + "\u2026");
 
         PrinterExecutor.printFormattedText(
                 requireContext(),
@@ -281,22 +257,24 @@ public class ReceiptFragment extends Fragment {
                 "Receipt " + receipt.getReceiptNo(),
                 config,
                 new PrinterExecutor.PrintCallback() {
-                    @Override
-                    public void onStart() {}
+                    @Override public void onStart() {}
 
                     @Override
                     public void onProgress(String message) {
-                        progressDialog.updateStep(message);
+                        // BUG-02 FIX: Guard against fragment detach during async print
+                        if (isAdded()) progressDialog.updateStep(message);
                     }
 
                     @Override
                     public void onSuccess(String message) {
+                        if (!isAdded()) return;
                         progressDialog.dismiss();
                         PrintProgressDialog.showSuccess(requireContext(), message);
                     }
 
                     @Override
                     public void onError(String errorMessage, Throwable error) {
+                        if (!isAdded()) return;
                         progressDialog.dismiss();
                         PrintProgressDialog.showError(requireContext(), "Print Error", errorMessage);
                     }

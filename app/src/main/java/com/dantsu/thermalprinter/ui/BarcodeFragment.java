@@ -1,7 +1,6 @@
 package com.dantsu.thermalprinter.ui;
 
 import android.content.Context;
-import android.graphics.Bitmap;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -46,7 +45,6 @@ public class BarcodeFragment extends Fragment {
         setupTypeSelector();
         setupInputListeners();
         setupPrintButton();
-
         updateBarcodePreview();
     }
 
@@ -64,11 +62,7 @@ public class BarcodeFragment extends Fragment {
         binding.editBarcodeData.setText(sampleData);
         binding.textBarcodeHelperHint.setText(hint);
         binding.textBarcodeTypePreviewBadge.setText(type.name() + " PREVIEW");
-
-        // Toggle text position radios visibility (only for 1D barcodes)
-        boolean is1D = (type != CodeType.QR);
-        binding.radioGroupBarcodeTextPos.setVisibility(is1D ? View.VISIBLE : View.GONE);
-
+        binding.radioGroupBarcodeTextPos.setVisibility(type != CodeType.QR ? View.VISIBLE : View.GONE);
         updateBarcodePreview();
     }
 
@@ -78,16 +72,13 @@ public class BarcodeFragment extends Fragment {
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override public void afterTextChanged(Editable s) { updateBarcodePreview(); }
         });
-
-        binding.sliderBarcodeSize.addOnChangeListener((slider, value, fromUser) -> {
-            binding.textSizeLabel.setText("Printed Size: " + ((int) value) + " mm");
-        });
-
+        binding.sliderBarcodeSize.addOnChangeListener((slider, value, fromUser) ->
+                binding.textSizeLabel.setText("Printed Size: " + ((int) value) + " mm"));
         binding.radioGroupBarcodeTextPos.setOnCheckedChangeListener((group, checkedId) -> updateBarcodePreview());
     }
 
     private void updateBarcodePreview() {
-        if (binding == null) return;
+        if (binding == null || !isAdded()) return; // BUG-02 FIX
         String data = binding.editBarcodeData.getText().toString().trim();
         binding.textBarcodeCaption.setText(data);
 
@@ -96,45 +87,48 @@ public class BarcodeFragment extends Fragment {
             return;
         }
 
-        Bitmap bitmap = null;
-        try {
-            switch (currentType) {
-                case QR:
-                    bitmap = BarcodePreviewHelper.generateQrCode(data, 220, 220);
-                    break;
-                case CODE128:
-                    bitmap = BarcodePreviewHelper.generateBarcode(data, BarcodeFormat.CODE_128, 400, 140);
-                    break;
-                case EAN13:
-                    if (data.matches("\\d{12,13}")) {
-                        bitmap = BarcodePreviewHelper.generateBarcode(data, BarcodeFormat.EAN_13, 400, 140);
-                    }
-                    break;
-                case EAN8:
-                    if (data.matches("\\d{7,8}")) {
-                        bitmap = BarcodePreviewHelper.generateBarcode(data, BarcodeFormat.EAN_8, 400, 140);
-                    }
-                    break;
-                case UPCA:
-                    if (data.matches("\\d{11,12}")) {
-                        bitmap = BarcodePreviewHelper.generateBarcode(data, BarcodeFormat.UPC_A, 400, 140);
-                    }
-                    break;
-                case UPCE:
-                    if (data.matches("\\d{6}")) {
-                        bitmap = BarcodePreviewHelper.generateBarcode(data, BarcodeFormat.UPC_E, 400, 140);
-                    }
-                    break;
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
+        // BUG-06 FIX: Async generation — doesn't block UI thread
+        switch (currentType) {
+            case QR:
+                BarcodePreviewHelper.generateQrCodeAsync(data, 220, 220, bmp -> {
+                    if (binding != null && isAdded()) binding.imgVisualBarcodePreview.setImageBitmap(bmp);
+                });
+                break;
+            case CODE128:
+                BarcodePreviewHelper.generateBarcodeAsync(data, BarcodeFormat.CODE_128, 400, 140, bmp -> {
+                    if (binding != null && isAdded()) binding.imgVisualBarcodePreview.setImageBitmap(bmp);
+                });
+                break;
+            case EAN13:
+                if (data.matches("\\d{12,13}"))
+                    BarcodePreviewHelper.generateBarcodeAsync(data, BarcodeFormat.EAN_13, 400, 140, bmp -> {
+                        if (binding != null && isAdded()) binding.imgVisualBarcodePreview.setImageBitmap(bmp);
+                    });
+                break;
+            case EAN8:
+                if (data.matches("\\d{7,8}"))
+                    BarcodePreviewHelper.generateBarcodeAsync(data, BarcodeFormat.EAN_8, 400, 140, bmp -> {
+                        if (binding != null && isAdded()) binding.imgVisualBarcodePreview.setImageBitmap(bmp);
+                    });
+                break;
+            case UPCA:
+                if (data.matches("\\d{11,12}"))
+                    BarcodePreviewHelper.generateBarcodeAsync(data, BarcodeFormat.UPC_A, 400, 140, bmp -> {
+                        if (binding != null && isAdded()) binding.imgVisualBarcodePreview.setImageBitmap(bmp);
+                    });
+                break;
+            case UPCE:
+                if (data.matches("\\d{6}"))
+                    BarcodePreviewHelper.generateBarcodeAsync(data, BarcodeFormat.UPC_E, 400, 140, bmp -> {
+                        if (binding != null && isAdded()) binding.imgVisualBarcodePreview.setImageBitmap(bmp);
+                    });
+                break;
         }
-
-        binding.imgVisualBarcodePreview.setImageBitmap(bitmap);
     }
 
     private void setupPrintButton() {
         binding.btnPrintBarcodeDirect.setOnClickListener(v -> {
+            if (!isAdded()) return;
             String data = binding.editBarcodeData.getText().toString().trim();
             if (data.isEmpty()) {
                 PrintProgressDialog.showError(requireContext(), "Missing Data", "Please enter code data to print.");
@@ -158,38 +152,34 @@ public class BarcodeFragment extends Fragment {
                 else if (currentType == CodeType.EAN8) typeName = "ean8";
                 else if (currentType == CodeType.UPCA) typeName = "upca";
                 else if (currentType == CodeType.UPCE) typeName = "upce";
-
                 printScript.append("[C]<barcode type='").append(typeName)
                         .append("' height='").append(Math.min(25, Math.max(8, size / 2)))
                         .append("' text='").append(textPos).append("'>")
                         .append(data).append("</barcode>\n");
             }
-
-            printScript.append("[L]\n");
-            printScript.append("[C]Data: ").append(data).append("\n");
-            printScript.append("[C]================================\n");
+            printScript.append("[L]\n").append("[C]Data: ").append(data).append("\n")
+                    .append("[C]================================\n");
 
             config = PrinterConfig.load(requireContext());
-            progressDialog.show("Printing " + currentType.name(), "Connecting to " + config.getConnectionType() + "…");
+            progressDialog.show("Printing " + currentType.name(), "Connecting to " + config.getConnectionType() + "\u2026");
 
-            PrinterExecutor.printFormattedText(
-                    requireContext(),
-                    printScript.toString(),
-                    "Barcode " + currentType.name(),
-                    config,
-                    new PrinterExecutor.PrintCallback() {
+            PrinterExecutor.printFormattedText(requireContext(), printScript.toString(),
+                    "Barcode " + currentType.name(), config, new PrinterExecutor.PrintCallback() {
                         @Override public void onStart() {}
-                        @Override public void onProgress(String message) { progressDialog.updateStep(message); }
+                        @Override public void onProgress(String message) {
+                            if (isAdded()) progressDialog.updateStep(message); // BUG-02 FIX
+                        }
                         @Override public void onSuccess(String message) {
+                            if (!isAdded()) return;
                             progressDialog.dismiss();
                             PrintProgressDialog.showSuccess(requireContext(), message);
                         }
                         @Override public void onError(String errorMessage, Throwable error) {
+                            if (!isAdded()) return;
                             progressDialog.dismiss();
                             PrintProgressDialog.showError(requireContext(), "Print Error", errorMessage);
                         }
-                    }
-            );
+                    });
         });
     }
 

@@ -14,6 +14,7 @@ import androidx.fragment.app.Fragment;
 
 import com.dantsu.thermalprinter.R;
 import com.dantsu.thermalprinter.core.PrinterExecutor;
+import com.dantsu.thermalprinter.core.ReceiptFormatter;
 import com.dantsu.thermalprinter.databinding.FragmentTagsEditorBinding;
 import com.dantsu.thermalprinter.model.PrinterConfig;
 
@@ -94,7 +95,7 @@ public class TagsEditorFragment extends Fragment {
                 return;
             }
             config = PrinterConfig.load(requireContext());
-            progressDialog.show("Printing Custom ESC/POS", "Connecting to " + config.getConnectionType() + "…");
+            progressDialog.show("Printing Custom ESC/POS", "Connecting to " + config.getConnectionType() + "\u2026");
 
             PrinterExecutor.printFormattedText(
                     requireContext(),
@@ -103,12 +104,16 @@ public class TagsEditorFragment extends Fragment {
                     config,
                     new PrinterExecutor.PrintCallback() {
                         @Override public void onStart() {}
-                        @Override public void onProgress(String message) { progressDialog.updateStep(message); }
+                        @Override public void onProgress(String message) {
+                            if (isAdded()) progressDialog.updateStep(message); // BUG-02 FIX
+                        }
                         @Override public void onSuccess(String message) {
+                            if (!isAdded()) return; // BUG-02 FIX
                             progressDialog.dismiss();
                             PrintProgressDialog.showSuccess(requireContext(), message);
                         }
                         @Override public void onError(String errorMessage, Throwable error) {
+                            if (!isAdded()) return; // BUG-02 FIX
                             progressDialog.dismiss();
                             PrintProgressDialog.showError(requireContext(), "Print Error", errorMessage);
                         }
@@ -118,17 +123,9 @@ public class TagsEditorFragment extends Fragment {
     }
 
     private void updateSimulationView(String rawText) {
-        String clean = rawText
-                .replaceAll("\\[[LCR]\\]", "")
-                .replaceAll("</?[bui]>", "")
-                .replaceAll("<font[^>]*>", "")
-                .replaceAll("</font>", "")
-                .replaceAll("<u[^>]*>", "")
-                .replaceAll("</u>", "")
-                .replaceAll("<barcode[^>]*>(.*?)</barcode>", "[BARCODE: $1]")
-                .replaceAll("<qrcode[^>]*>(.*?)</qrcode>", "[QR CODE: $1]")
-                .replaceAll("<img>.*?</img>", "[BITMAP IMAGE]");
-        binding.textEditorSimulation.setText(clean.trim());
+        // OPT-04 FIX: Use ReceiptFormatter's pre-compiled static patterns instead of re-compiling each time
+        String clean = ReceiptFormatter.stripTagsForPreview(rawText);
+        binding.textEditorSimulation.setText(clean);
     }
 
     private void loadTemplateCafe() {
